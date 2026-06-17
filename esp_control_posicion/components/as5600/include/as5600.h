@@ -22,60 +22,60 @@ typedef struct {
 } as5600_status_t;
 
 /**
- * @brief AS5600 device handle
+ * @brief   AS5600 device handle
  */
 typedef i2c_master_dev_handle_t as5600_handle_t;
 
 /**
- * @brief Initialize AS5600 direction GPIO
+ * @brief   Initialize AS5600 direction GPIO
  * 
- * @param gpio_num GPIO number for DIR pin
- * @return esp_err_t 
+ * @param   gpio_num GPIO number for DIR pin
+ * @return  esp_err_t 
  */
 esp_err_t as5600_init_dir(gpio_num_t gpio_num);
 
 /**
- * @brief Set AS5600 direction
+ * @brief   Set AS5600 direction
  * 
- * @param gpio_num GPIO number for DIR pin
- * @param dir 0 for clockwise, 1 for counter-clockwise
- * @return esp_err_t 
+ * @param   gpio_num GPIO number for DIR pin
+ * @param   dir 0 for clockwise, 1 for counter-clockwise
+ * @return  esp_err_t 
  */
 esp_err_t as5600_set_dir(gpio_num_t gpio_num, uint8_t dir);
 
 /**
- * @brief Get AS5600 status
+ * @brief   Get AS5600 status
  * 
- * @param handle AS5600 device handle
- * @param status Pointer to status structure
- * @return esp_err_t 
+ * @param   handle AS5600 device handle
+ * @param   status Pointer to status structure
+ * @return  esp_err_t 
  */
 esp_err_t as5600_get_status(as5600_handle_t handle, as5600_status_t *status);
 
 /**
- * @brief Get AS5600 angle
+ * @brief   Get AS5600 angle
  * 
- * @param handle AS5600 device handle
- * @param angle Pointer to store 12-bit angle (0-4095)
- * @return esp_err_t 
+ * @param   handle AS5600 device handle
+ * @param   angle Pointer to store 12-bit angle (0-4095)
+ * @return  esp_err_t 
  */
 esp_err_t as5600_get_angle(as5600_handle_t handle, uint16_t *angle);
 
 /**
- * @brief Get AS5600 Automatic Gain Control value
+ * @brief   Get AS5600 Automatic Gain Control value
  * 
- * @param handle AS5600 device handle
- * @param agc Pointer to store AGC value
- * @return esp_err_t 
+ * @param   handle AS5600 device handle
+ * @param   agc Pointer to store AGC value
+ * @return  esp_err_t 
  */
 esp_err_t as5600_get_agc(as5600_handle_t handle, uint8_t *agc);
 
 /**
- * @brief Process angle relative to a reference
+ * @brief   Process angle relative to a reference
  * 
- * @param angle Current angle (0-4095)
- * @param ref_angle Reference angle (0-4095)
- * @return int8_t Scaled difference (-127 to 127)
+ * @param   angle Current angle (0-4095)
+ * @param   ref_angle Reference angle (0-4095)
+ * @return  int8_t Scaled difference (-127 to 127)
  */
 int8_t as5600_process_angle(uint16_t angle, uint16_t ref_angle);
 
