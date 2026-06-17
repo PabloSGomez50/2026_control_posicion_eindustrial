@@ -4,6 +4,7 @@
 #include "esp_system.h"
 #include "esp_log.h"
 #include "as5600.h"
+#include "l298n.h"
 
 #define TAG "EI_MAIN"
 #define DIR_GPIO_NUM GPIO_NUM_4
