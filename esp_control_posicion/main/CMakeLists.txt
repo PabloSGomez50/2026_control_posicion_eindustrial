@@ -4,4 +4,5 @@ idf_component_register(
     REQUIRES
         as5600
         l298n
+        pid
 )
