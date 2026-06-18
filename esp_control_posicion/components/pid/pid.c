@@ -81,6 +81,10 @@ esp_err_t pid_speed(speed_params_t speed_params, pid_kick_t pid_kick, pid_variab
         ESP_LOGW(TAG, "Trying using no kick without calculation, using with kick");
         type = WITH_KICK;
     }
+    if(pid_kick == WITH_KICK && speed_params.ki != -1) {
+        ESP_LOGW(TAG, "Trying using with kick without calculation, using no kick");
+        type = NO_KICK;
+    }
     
     switch (type) {
         case WITH_KICK: {
