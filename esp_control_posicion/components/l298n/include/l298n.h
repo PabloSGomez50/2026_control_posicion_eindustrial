@@ -1,6 +1,7 @@
 #ifndef L298N_H
 #define L298N_H
 
+#include <stdint.h>
 #include "driver/mcpwm_prelude.h"
 #include "driver/gpio.h"
 
