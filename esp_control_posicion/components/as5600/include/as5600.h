@@ -79,4 +79,12 @@ esp_err_t as5600_get_agc(as5600_handle_t handle, uint8_t *agc);
  */
 int8_t as5600_process_angle(uint16_t angle, uint16_t ref_angle);
 
+/**
+ * @brief   Convert 12-bit angle to degrees
+ * 
+ * @param   angle 12-bit angle (0-4095)
+ * @return  float Angle in degrees (0.0 to 360.0)
+ */
+float as5600_angle_to_degrees(uint16_t angle);
+
 #endif /* AS5600_H */
