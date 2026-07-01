@@ -38,7 +38,7 @@ esp_err_t as5600_get_status(as5600_handle_t handle, as5600_status_t *status)
     status->ml = (buf & 0b010) >> 1;
     status->md = (buf & 0b100) >> 2;
     status->valid = (status->md && !status->ml && !status->mh) ? 1 : 0;
-
+    ESP_LOGI(TAG, "Status: MH=%d, ML=%d, MD=%d, Valid=%d", status->mh, status->ml, status->md, status->valid);
     return ESP_OK;
 }
 
@@ -59,6 +59,11 @@ esp_err_t as5600_get_agc(as5600_handle_t handle, uint8_t *agc)
 {
     uint8_t reg = AS5600_AGC_REG;
     return i2c_master_transmit_receive(handle, &reg, 1, agc, 1, 1000);
+}
+
+float as5600_angle_to_degrees(uint16_t angle)
+{
+    return (float)angle * 360.0f / 4096.0f;
 }
 
 int8_t as5600_process_angle(uint16_t angle, uint16_t ref_angle)

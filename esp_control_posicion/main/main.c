@@ -46,15 +46,15 @@ void app_main(void)
 
     while (1) {
 
-        if (as5600_get_status((as5600_handle_t)as5600_handle, &status) == ESP_OK && status.valid) {
+        if (as5600_get_status((as5600_handle_t)as5600_handle, &status) == ESP_OK && status.md) {
             if (as5600_get_angle((as5600_handle_t)as5600_handle, &angle) == ESP_OK) {
-                ESP_LOGI(TAG, "Angle: %d", angle);
+                ESP_LOGI(TAG, "Angle: %.2f degrees", as5600_angle_to_degrees(angle));
             } else {
                 ESP_LOGE(TAG, "Failed to read angle");
             }
         } else {
             ESP_LOGE(TAG, "Invalid status");
         }
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }
