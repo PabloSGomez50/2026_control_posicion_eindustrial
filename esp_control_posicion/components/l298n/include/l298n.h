@@ -2,19 +2,17 @@
 #define L298N_H
 
 #include <stdint.h>
-#include "driver/mcpwm_prelude.h"
+#include "driver/ledc.h"
 #include "driver/gpio.h"
 
 typedef struct {
-    mcpwm_timer_handle_t timer;
-    mcpwm_cmpr_handle_t comparator;
+    ledc_mode_t ledc_mode;
+    ledc_channel_t ledc_channel;
 } pwm_handle_t;
 
 typedef struct {
-    mcpwm_timer_config_t timer_config;
-    mcpwm_operator_config_t operator_config;
-    mcpwm_comparator_config_t comparator_config;
-    mcpwm_generator_config_t generator_config;
+    ledc_timer_config_t ledc_timer_config;
+    ledc_channel_config_t ledc_channel_config;
 } pwm_config_t;
 
 typedef struct {
@@ -36,15 +34,7 @@ typedef enum {
  * @param   direction_gpio direction gpio pins
  * @return  esp_err_t
  */
-esp_err_t l298n_config(pwm_config_t pwm_config, pwm_handle_t *pwm_handle, direction_gpio_t direction_gpio);
-
-/**
- * @brief   Starts the PWM timer
- * 
- * @param   pwm_handle Handles of the timer and comparator
- * @return  esp_err_t
- */
-esp_err_t l298n_start(pwm_handle_t pwm_handle);
+esp_err_t l298n_init(pwm_config_t pwm_config, pwm_handle_t *pwm_handle, direction_gpio_t direction_gpio);
 
 /**
  * @brief   Sets the duty cycle of the pwm
