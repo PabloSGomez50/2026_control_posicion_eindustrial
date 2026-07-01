@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_system.h"
 #include "esp_log.h"
 #include "as5600.h"
@@ -13,8 +14,76 @@
 #define I2C_MASTER_SCL_IO GPIO_NUM_9
 #define I2C_MASTER_SDA_IO GPIO_NUM_8
 
-void app_main(void)
-{
+#define PWM_FREQ                4000
+#define PWM_RES                 LEDC_TIMER_10_BIT
+#define PWM_MAX                 (1 << PWM_RES)
+#define PWM_GPIO                9
+#define IN1_GPIO                10
+#define IN2_GPIO                12
+
+QueueHandle_t q_angle;
+
+void task_read_angle(void *params) {
+
+}
+
+void task_pid(void *params) {
+    // Primera versión con valores a mano
+    pid_params_t pid_params = {
+        .kp = 4,
+        .td = 0.1,
+        .ti = 0.2,
+        .ts = 1000,
+    };
+
+    pid_variables_t pid_variables = {
+        .e_0 = 0, .e_1 = 0, .e_2 = 0,
+        .integral_action = 0,
+        .max_out = PWM_MAX, .min_out = 0,
+        .u = 0,
+        .y_0 = 0, .y_1 = 0, .y_2 = 0,
+    };
+
+    // Parametros de posición 
+    position_params_t position_params;
+    pid_position_parameters(pid_params, &position_params);
+
+    // Parametros de velocidad
+    speed_params_t speed_params;
+    pid_speed_parameters(pid_params, WITH_KICK, &speed_params);
+
+    pwm_handle_t pwm_handle;
+    pwm_config_t pwm_config = {
+        .ledc_timer_config = {
+            .speed_mode = LEDC_LOW_SPEED_MODE,
+            .duty_resolution = LEDC_TIMER_10_BIT,
+            .timer_num = LEDC_TIMER_0,
+            .freq_hz = PWM_FREQ,
+            .clk_cfg = LEDC_AUTO_CLK,
+        },
+        .ledc_channel_config = {
+            .gpio_num = PWM_GPIO,
+            .speed_mode = LEDC_LOW_SPEED_MODE,
+            .channel = LEDC_CHANNEL_0,
+            .timer_sel = LEDC_TIMER_0,
+            .duty = 0,
+            .hpoint = 0,
+        },
+    };
+    direction_gpio_t direction_gpio = {
+        .in1 = IN1_GPIO,
+        .in2 = IN2_GPIO,
+    };
+    ESP_ERROR_CHECK(l298n_init(pwm_config, &pwm_handle, direction_gpio));
+
+    while(1) {
+        
+    }
+}
+
+void app_main(void) {
+    q_angle = xQueueCreate(1, sizeof(float));
+
 
     as5600_init_dir(DIR_GPIO_NUM);
     as5600_set_dir(DIR_GPIO_NUM, 0);
