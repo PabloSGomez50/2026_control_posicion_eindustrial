@@ -37,6 +37,11 @@ typedef enum {
     WITH_KICK,
 } pid_kick_t;
 
+typedef enum {
+    WINDUP,
+    NO_WINDUP,
+} pid_windup_t;
+
 /**
  * @brief   Calculates the position parameters for the PID
  * 
@@ -64,7 +69,7 @@ esp_err_t pid_speed_parameters(pid_params_t pid_params, pid_kick_t pid_kick, spe
  * @param   pid_variables variables for the PID control
  * @return  esp_err_t
  */
-esp_err_t pid_position(position_params_t position_params, pid_kick_t pid_kick, pid_variables_t *pid_variables);
+esp_err_t pid_position(position_params_t position_params, pid_kick_t pid_kick, pid_windup_t pid_windup, pid_variables_t *pid_variables);
 
 /**
  * @brief   Computes the speed PID

@@ -48,10 +48,12 @@ esp_err_t pid_speed_parameters(pid_params_t pid_params, pid_kick_t pid_kick, spe
     return ESP_OK;
 }
 
-esp_err_t pid_position(position_params_t position_params, pid_kick_t pid_kick, pid_variables_t *pid_variables) {
+esp_err_t pid_position(position_params_t position_params, pid_kick_t pid_kick, pid_windup_t pid_windup, pid_variables_t *pid_variables) {
     pid_variables->integral_action += position_params.ki * (pid_variables->e_0 + pid_variables->e_1);
 
-    pid_limit(&pid_variables->integral_action, pid_variables);
+    if(pid_windup == WINDUP) {
+        pid_limit(&pid_variables->integral_action, pid_variables);
+    }
 
     switch (pid_kick) {
         case WITH_KICK: {
