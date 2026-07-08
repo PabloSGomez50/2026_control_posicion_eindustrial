@@ -17,10 +17,10 @@
 #define PWM_FREQ                4000
 #define PWM_RES                 LEDC_TIMER_10_BIT
 #define PWM_MAX                 (1 << PWM_RES)
-#define PWM_GPIO                9
-#define IN1_GPIO                10
-#define IN2_GPIO                12
-#define PID_TS                  10 // En ms
+#define PWM_GPIO                GPIO_NUM_0
+#define IN1_GPIO                GPIO_NUM_1
+#define IN2_GPIO                GPIO_NUM_2
+#define PID_TS                  100 // En ms
 
 QueueHandle_t q_angle;
 
@@ -51,7 +51,7 @@ void task_read_angle(void *params) {
     TickType_t ticks = xTaskGetTickCount();
     as5600_status_t status;
     uint16_t angle;
-    float degrees;
+    float degrees = 0.0f;
 
     while(1) {
         if (as5600_get_status((as5600_handle_t)as5600_handle, &status) == ESP_OK && status.md) {
@@ -119,14 +119,23 @@ void task_pid(void *params) {
     ESP_ERROR_CHECK(l298n_init(pwm_config, &pwm_handle, direction_gpio));
 
     float angle;
-
+    uint32_t pwm_raw;
     while(1) {
         xQueueReceive(q_angle, &angle, portMAX_DELAY);
+
+        ESP_LOGI(TAG, "Angle: %.2f", angle);
+        pid_position(position_params, WITH_KICK, WINDUP, &pid_variables);
+
+        pwm_raw = angle / 360.0 * PWM_MAX;
+        l298n_set_dc(pwm_handle, pwm_raw);
+        l298n_change_dir(direction_gpio, CLOCKWISE);
     }
 }
 
 void app_main(void) {
+    ESP_ERROR_CHECK(ledc_fade_func_install(0));
     q_angle = xQueueCreate(1, sizeof(float));
+    ESP_LOGI(TAG, "Queue created");
 
     xTaskCreate(
         task_read_angle,
@@ -136,7 +145,7 @@ void app_main(void) {
         tskIDLE_PRIORITY + 1,
         NULL
     );
-
+    ESP_LOGI(TAG, "Task created: task_read_angle");
     xTaskCreate(
         task_pid,
         "task_pid",
@@ -145,4 +154,5 @@ void app_main(void) {
         tskIDLE_PRIORITY + 1,
         NULL
     );
+    ESP_LOGI(TAG, "Task created: task_pid");
 }
