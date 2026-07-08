@@ -20,11 +20,53 @@
 #define PWM_GPIO                9
 #define IN1_GPIO                10
 #define IN2_GPIO                12
+#define PID_TS                  10 // En ms
 
 QueueHandle_t q_angle;
 
 void task_read_angle(void *params) {
+    as5600_init_dir(DIR_GPIO_NUM);
+    as5600_set_dir(DIR_GPIO_NUM, 0);
+    i2c_master_bus_handle_t bus_handle;
+    i2c_master_bus_config_t i2c_mst_config = {
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .i2c_port = I2C_MASTER_PORT,
+        .scl_io_num = I2C_MASTER_SCL_IO,
+        .sda_io_num = I2C_MASTER_SDA_IO,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
 
+    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_mst_config, &bus_handle));
+
+    i2c_device_config_t as5600_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = AS5600_ADDRESS,
+        .scl_speed_hz = 100000,
+    };
+    i2c_master_dev_handle_t as5600_handle;
+
+    ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &as5600_cfg, &as5600_handle));
+
+    TickType_t ticks = xTaskGetTickCount();
+    as5600_status_t status;
+    uint16_t angle;
+    float degrees;
+
+    while(1) {
+        if (as5600_get_status((as5600_handle_t)as5600_handle, &status) == ESP_OK && status.md) {
+            if (as5600_get_angle((as5600_handle_t)as5600_handle, &angle) == ESP_OK) {
+                degrees = as5600_angle_to_degrees(angle);
+            } else {
+                ESP_LOGE(TAG, "Failed to read angle");
+            }
+        } else {
+            ESP_LOGE(TAG, "Invalid status");
+        }
+        xQueueSendToBack(q_angle, &degrees, portMAX_DELAY);
+        vTaskDelayUntil(&ticks, pdMS_TO_TICKS(PID_TS));
+    }
+    
 }
 
 void task_pid(void *params) {
@@ -33,7 +75,7 @@ void task_pid(void *params) {
         .kp = 4,
         .td = 0.1,
         .ti = 0.2,
-        .ts = 1000,
+        .ts = PID_TS, // No se si está bien
     };
 
     pid_variables_t pid_variables = {
@@ -76,54 +118,31 @@ void task_pid(void *params) {
     };
     ESP_ERROR_CHECK(l298n_init(pwm_config, &pwm_handle, direction_gpio));
 
+    float angle;
+
     while(1) {
-        
+        xQueueReceive(q_angle, &angle, portMAX_DELAY);
     }
 }
 
 void app_main(void) {
     q_angle = xQueueCreate(1, sizeof(float));
 
+    xTaskCreate(
+        task_read_angle,
+        "task_read_angle",
+        1024,
+        NULL,
+        tskIDLE_PRIORITY + 1,
+        NULL
+    );
 
-    as5600_init_dir(DIR_GPIO_NUM);
-    as5600_set_dir(DIR_GPIO_NUM, 0);
-    i2c_master_bus_handle_t bus_handle;
-    i2c_master_bus_config_t i2c_mst_config = {
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .i2c_port = I2C_MASTER_PORT,
-        .scl_io_num = I2C_MASTER_SCL_IO,
-        .sda_io_num = I2C_MASTER_SDA_IO,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-
-    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_mst_config, &bus_handle));
-
-    i2c_device_config_t as5600_cfg = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = AS5600_ADDRESS,
-        .scl_speed_hz = 100000,
-    };
-    i2c_master_dev_handle_t as5600_handle;
-
-    ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &as5600_cfg, &as5600_handle));
-
-    as5600_status_t status;
-    uint16_t angle;
-
-    ESP_LOGI(TAG, "-- Inicializacion del programa -- ");
-
-    while (1) {
-
-        if (as5600_get_status((as5600_handle_t)as5600_handle, &status) == ESP_OK && status.md) {
-            if (as5600_get_angle((as5600_handle_t)as5600_handle, &angle) == ESP_OK) {
-                ESP_LOGI(TAG, "Angle: %.2f degrees", as5600_angle_to_degrees(angle));
-            } else {
-                ESP_LOGE(TAG, "Failed to read angle");
-            }
-        } else {
-            ESP_LOGE(TAG, "Invalid status");
-        }
-        vTaskDelay(100 / portTICK_PERIOD_MS);
-    }
+    xTaskCreate(
+        task_pid,
+        "task_pid",
+        1024,
+        NULL,
+        tskIDLE_PRIORITY + 1,
+        NULL
+    );
 }
