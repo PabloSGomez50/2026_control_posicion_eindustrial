@@ -5,4 +5,5 @@ idf_component_register(
         as5600
         l298n
         pid
+        esp_driver_uart
 )
