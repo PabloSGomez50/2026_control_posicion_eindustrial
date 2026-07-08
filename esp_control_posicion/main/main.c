@@ -4,6 +4,7 @@
 #include "freertos/queue.h"
 #include "esp_system.h"
 #include "esp_log.h"
+#include "driver/uart.h"
 #include "as5600.h"
 #include "l298n.h"
 #include "pid.h"
@@ -22,7 +23,14 @@
 #define IN2_GPIO                GPIO_NUM_2
 #define PID_TS                  100 // En ms
 
+#define UART_BAUDRATE       115200
+#define UART_BUFF           256
+#define UART_PATTERN_CHR    '\n'
+
 QueueHandle_t q_angle;
+QueueHandle_t q_uart;
+
+void uart_init(void);
 
 void task_read_angle(void *params) {
     as5600_init_dir(DIR_GPIO_NUM);
@@ -72,10 +80,11 @@ void task_read_angle(void *params) {
 void task_pid(void *params) {
     // Primera versión con valores a mano
     pid_params_t pid_params = {
-        .kp = 4,
-        .td = 0.1,
-        .ti = 0.2,
-        .ts = PID_TS, // No se si está bien
+        .kp = 0,
+        .ki = 0,
+        .kd = 0,
+        .kick = NO_KICK,
+        .windup = WITH_WINDUP,
     };
 
     pid_variables_t pid_variables = {
@@ -85,14 +94,6 @@ void task_pid(void *params) {
         .u = 0,
         .y_0 = 0, .y_1 = 0, .y_2 = 0,
     };
-
-    // Parametros de posición 
-    position_params_t position_params;
-    pid_position_parameters(pid_params, &position_params);
-
-    // Parametros de velocidad
-    speed_params_t speed_params;
-    pid_speed_parameters(pid_params, WITH_KICK, &speed_params);
 
     pwm_handle_t pwm_handle;
     pwm_config_t pwm_config = {
@@ -124,11 +125,70 @@ void task_pid(void *params) {
         xQueueReceive(q_angle, &angle, portMAX_DELAY);
 
         ESP_LOGI(TAG, "Angle: %.2f", angle);
-        pid_position(position_params, WITH_KICK, WINDUP, &pid_variables);
 
         pwm_raw = angle / 360.0 * PWM_MAX;
         l298n_set_dc(pwm_handle, pwm_raw);
         l298n_change_dir(direction_gpio, CLOCKWISE);
+    }
+}
+
+void task_uart_tx(void *params) {
+    //buffer_t final_buffer;
+    bool start = false;
+    uint8_t header[2] = {0xAA, 0x55};
+
+    while(1) {
+        //xQueueReceive(q_filtered, &final_buffer, portMAX_DELAY);
+        //if(xQueuePeek(q_start, &start, 0) != pdTRUE) start = false;
+        if(start) {
+            uart_write_bytes(UART_NUM_0, (char *)header, 2);
+            //uart_write_bytes(UART_NUM_0, (char *)final_buffer.data, sizeof(final_buffer.data));
+        }
+    }
+}
+
+void task_uart_rx(void *params) {
+    uart_event_t event;
+    //uint8_t* dtmp = (uint8_t*) malloc(UART_BUFF + 1);
+    float f, q;
+    //lpf_t filter_config;
+    bool start = false;
+
+    //xQueueOverwrite(q_start, &start);
+
+    while(1) {
+        /*
+        xQueueReceive(q_uart, (void *)&event, portMAX_DELAY);
+        if(event.type == UART_PATTERN_DET) {
+            size_t buffered_size;
+            uart_get_buffered_data_len(UART_NUM_0, &buffered_size);
+            int pos = uart_pattern_pop_pos(UART_NUM_0);
+            if(pos != -1) {
+                int read_len = uart_read_bytes(UART_NUM_0, dtmp, pos + 1, portMAX_DELAY);
+                dtmp[read_len] = '\0';
+
+                if(strncmp((char *)dtmp, "start", 5) == 0) {
+                    start = true;
+                    xQueueOverwrite(q_start, &start);
+                    ESP_LOGI("UART_RX", "start");
+                }
+                else if(strncmp((char *)dtmp, "stop", 4) == 0) {
+                    start = false;
+                    xQueueOverwrite(q_start, &start);
+                    ESP_LOGI("UART_RX", "stop");
+                }
+                else if (sscanf((char *)dtmp, "set %f %f", &f, &q) == 2) {
+                    filter_config.f = f;
+                    filter_config.q = q;
+                    xQueueOverwrite(q_filter, &filter_config);
+                    ESP_LOGI("UART_RX", "set %.0f %.0f", filter_config.f, filter_config.q);
+                }
+            }
+            else {
+                uart_flush_input(UART_NUM_0);
+            }
+        }
+        */
     }
 }
 
@@ -155,4 +215,21 @@ void app_main(void) {
         NULL
     );
     ESP_LOGI(TAG, "Task created: task_pid");
+}
+
+void uart_init(void) {
+    uart_config_t uart_config = {
+        .baud_rate = UART_BAUDRATE,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+
+    // 1. Instalamos el driver con una cola de eventos (uart0_queue)
+    uart_driver_install(UART_NUM_0, UART_BUFF * 2, UART_BUFF * 2, 20, &q_uart, 0);
+    uart_param_config(UART_NUM_0, &uart_config);
+    uart_enable_pattern_det_baud_intr(UART_NUM_0, UART_PATTERN_CHR, 1, 9, 0, 0);
+    uart_pattern_queue_reset(UART_NUM_0, 20);
 }
