@@ -18,6 +18,7 @@ typedef struct {
     float kp;
     float ki;
     float kd;
+    float ref;
     pid_kick_t kick;
     pid_windup_t windup;
 } pid_params_t;
