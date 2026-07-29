@@ -90,7 +90,7 @@ void task_pid(void *params) {
     pid_variables_t pid_variables = {
         .e_0 = 0, .e_1 = 0, .e_2 = 0,
         .integral_action = 0,
-        .max_out = PWM_MAX, .min_out = 0,
+        .max_out = PWM_MAX, .min_out = -PWM_MAX,
         .u = 0,
         .y_0 = 0, .y_1 = 0, .y_2 = 0,
     };
@@ -119,16 +119,27 @@ void task_pid(void *params) {
     };
     ESP_ERROR_CHECK(l298n_init(pwm_config, &pwm_handle, direction_gpio));
 
-    float angle;
+    float angle, ref = 0;
     uint32_t pwm_raw;
     while(1) {
         xQueueReceive(q_angle, &angle, portMAX_DELAY);
 
-        ESP_LOGI(TAG, "Angle: %.2f", angle);
+        // Falta ver como iniciar el PWM y pasar la referencia
 
-        pwm_raw = angle / 360.0 * PWM_MAX;
-        l298n_set_dc(pwm_handle, pwm_raw);
-        l298n_change_dir(direction_gpio, CLOCKWISE);
+        ESP_LOGI(TAG, "Angle: %.2f", angle);
+        
+        pid_variables.e_0 = ref - angle;
+
+        pid_position(pid_params, &pid_variables);
+
+        if(pid_variables.u < 0) {
+            l298n_change_dir(direction_gpio, COUNTER_CLOCKWISE);
+        }
+        else {
+            l298n_change_dir(direction_gpio, CLOCKWISE);
+        }
+
+        l298n_set_dc(pwm_handle, abs((int32_t)pid_variables.u));
     }
 }
 
@@ -149,15 +160,10 @@ void task_uart_tx(void *params) {
 
 void task_uart_rx(void *params) {
     uart_event_t event;
-    //uint8_t* dtmp = (uint8_t*) malloc(UART_BUFF + 1);
-    float f, q;
-    //lpf_t filter_config;
+    uint8_t* dtmp = (uint8_t*) malloc(UART_BUFF + 1);
     bool start = false;
 
-    //xQueueOverwrite(q_start, &start);
-
     while(1) {
-        /*
         xQueueReceive(q_uart, (void *)&event, portMAX_DELAY);
         if(event.type == UART_PATTERN_DET) {
             size_t buffered_size;
@@ -169,26 +175,17 @@ void task_uart_rx(void *params) {
 
                 if(strncmp((char *)dtmp, "start", 5) == 0) {
                     start = true;
-                    xQueueOverwrite(q_start, &start);
-                    ESP_LOGI("UART_RX", "start");
                 }
                 else if(strncmp((char *)dtmp, "stop", 4) == 0) {
                     start = false;
-                    xQueueOverwrite(q_start, &start);
-                    ESP_LOGI("UART_RX", "stop");
                 }
-                else if (sscanf((char *)dtmp, "set %f %f", &f, &q) == 2) {
-                    filter_config.f = f;
-                    filter_config.q = q;
-                    xQueueOverwrite(q_filter, &filter_config);
-                    ESP_LOGI("UART_RX", "set %.0f %.0f", filter_config.f, filter_config.q);
-                }
+
+                // Meter comandos
             }
             else {
                 uart_flush_input(UART_NUM_0);
             }
         }
-        */
     }
 }
 
@@ -196,6 +193,7 @@ void app_main(void) {
     ESP_ERROR_CHECK(ledc_fade_func_install(0));
     q_angle = xQueueCreate(1, sizeof(float));
     ESP_LOGI(TAG, "Queue created");
+    uart_init();
 
     xTaskCreate(
         task_read_angle,
@@ -215,6 +213,24 @@ void app_main(void) {
         NULL
     );
     ESP_LOGI(TAG, "Task created: task_pid");
+    xTaskCreate(
+        task_uart_tx,
+        "task_uart_tx",
+        1024,
+        NULL,
+        tskIDLE_PRIORITY + 1,
+        NULL
+    );
+    ESP_LOGI(TAG, "Task created: task_uart_tx");
+    xTaskCreate(
+        task_uart_rx,
+        "task_uart_rx",
+        1024,
+        NULL,
+        tskIDLE_PRIORITY + 1,
+        NULL
+    );
+    ESP_LOGI(TAG, "Task created: task_uart_rx");
 }
 
 void uart_init(void) {
