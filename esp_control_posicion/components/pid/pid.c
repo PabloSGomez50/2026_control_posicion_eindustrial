@@ -51,7 +51,7 @@ esp_err_t pid_position(pid_params_t pid_params, pid_variables_t *pid_variables) 
 esp_err_t pid_limit(float *variable, pid_variables_t *pid_variables) {
     if(*variable > pid_variables->max_out)
         *variable = pid_variables->max_out;
-    if(*variable > pid_variables->min_out)
+    if(*variable < pid_variables->min_out)
         *variable = pid_variables->min_out;
     return ESP_OK;
 }
