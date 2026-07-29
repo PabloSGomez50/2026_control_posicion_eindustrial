@@ -23,11 +23,11 @@ typedef struct {
 } pid_params_t;
 
 typedef struct {
-    float e_0, e_1, e_2;
+    float e_0, e_1;
     float integral_action;
     float max_out, min_out;
     float u;
-    float y_0, y_1, y_2;
+    float y_0, y_1;
 } pid_variables_t;
 
 /**

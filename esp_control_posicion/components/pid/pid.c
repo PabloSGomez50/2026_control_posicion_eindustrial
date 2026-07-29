@@ -57,9 +57,7 @@ esp_err_t pid_limit(float *variable, pid_variables_t *pid_variables) {
 }
 
 esp_err_t pid_prev_variables(pid_variables_t *pid_variables) {
-    pid_variables->e_2 = pid_variables->e_1;
     pid_variables->e_1 = pid_variables->e_0;
-    pid_variables->y_2 = pid_variables->y_1;
     pid_variables->y_1 = pid_variables->y_0;
 
     return ESP_OK;
