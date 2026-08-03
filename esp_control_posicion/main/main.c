@@ -47,6 +47,7 @@ typedef struct {
     float ref;
     float angle;
     float u_control;
+    char * u_name;
 } uart_trasnmit_t;
 
 QueueHandle_t q_angle;
@@ -210,6 +211,7 @@ void task_pid(void *params) {
             uart_tx_data.ref = ref;
             uart_tx_data.angle = angle;
             uart_tx_data.u_control = pid_variables.u;
+            uart_tx_data.u_name = NULL;
             xQueueSendToBack(q_tx_data, &uart_tx_data, portMAX_DELAY);
         }
         else {
@@ -227,12 +229,26 @@ void task_uart_tx(void *params) {
 
     while(1) {
         xQueueReceive(q_tx_data, &final_buffer, portMAX_DELAY);
-        sprintf(buffer, "R%.2fA%.2fU%.2f\n", final_buffer.ref, final_buffer.angle, final_buffer.u_control);
+
+        if(final_buffer.u_name != NULL) {
+            strcpy(buffer, final_buffer.u_name);
+        }
+        else {
+            sprintf(buffer, "R%.2fA%.2fU%.2f\n", final_buffer.ref, final_buffer.angle, final_buffer.u_control);
+        }
         uart_write_bytes(UART_NUM_0, buffer, strlen(buffer));
     }
 }
 
 void task_uart_rx(void *params) {
+    char var_name[32];
+    uart_trasnmit_t uart_transmit = {
+        .angle = 0,
+        .ref = 0,
+        .u_control = 0,
+        .u_name = var_name
+    };
+    
     uart_rx_event_t uart_event;
     uart_event_t event;
     uint8_t* dtmp = (uint8_t*) malloc(UART_BUFF + 1);
@@ -255,26 +271,33 @@ void task_uart_rx(void *params) {
                 }
                 else if (sscanf((char *)dtmp, "set kp %f", &uart_event.value) == 1) {
                     uart_event.event = EVENT_KP;
+                    sprintf(var_name, "Kp:%f", uart_event.value);
                 }
                 else if (sscanf((char *)dtmp, "set kd %f", &uart_event.value) == 1) {
                     uart_event.event = EVENT_KD;
+                    sprintf(var_name, "Kd:%f", uart_event.value);
                 }
                 else if (sscanf((char *)dtmp, "set ki %f", &uart_event.value) == 1) {
                     uart_event.event = EVENT_KI;
+                    sprintf(var_name, "Ki:%f", uart_event.value);
                 }
                 else if (sscanf((char *)dtmp, "set windup %f", &uart_event.value) == 1) {
                     uart_event.event = EVENT_WINDUP;
+                    sprintf(var_name, "Windup:%f", uart_event.value);
                 }
                 else if (sscanf((char *)dtmp, "set kick %f", &uart_event.value) == 1) {
                     uart_event.event = EVENT_KICK;
+                    sprintf(var_name, "Kick:%f", uart_event.value);
                 }
                 else if (sscanf((char *)dtmp, "set ref %f", &uart_event.value) == 1) {
                     uart_event.event = EVENT_REF;
+                    sprintf(var_name, "Ref:%f", uart_event.value);
                 } else {
                     ESP_LOGW(TAG, "Unknown command received: %s", dtmp);
                     continue;
                 }
 
+                xQueueSendToBack(q_tx_data, &uart_transmit, portMAX_DELAY);
                 xQueueSendToBack(q_rx_event, &event, portMAX_DELAY);
             }
             else {
