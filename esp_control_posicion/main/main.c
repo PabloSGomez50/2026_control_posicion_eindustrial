@@ -15,12 +15,12 @@
 #define I2C_MASTER_SCL_IO GPIO_NUM_9
 #define I2C_MASTER_SDA_IO GPIO_NUM_8
 
-#define PWM_FREQ                4000
+#define PWM_FREQ                20000
 #define PWM_RES                 LEDC_TIMER_10_BIT
 #define PWM_MAX                 (1 << PWM_RES)
-#define PWM_GPIO                GPIO_NUM_0
-#define IN1_GPIO                GPIO_NUM_1
-#define IN2_GPIO                GPIO_NUM_2
+#define PWM_GPIO                GPIO_NUM_1
+#define IN1_GPIO                GPIO_NUM_2
+#define IN2_GPIO                GPIO_NUM_3
 #define PID_TS                  20 // En ms
 
 #define UART_BAUDRATE       115200
@@ -47,8 +47,9 @@ typedef struct {
     float ref;
     float angle;
     float u_control;
-    char * u_name;
-} uart_trasnmit_t;
+    char u_name[32];
+    bool is_param;
+} uart_transmit_t;
 
 QueueHandle_t q_angle;
 QueueHandle_t q_uart;
@@ -89,13 +90,15 @@ void task_read_angle(void *params) {
     while(1) {
         if (as5600_get_status((as5600_handle_t)as5600_handle, &status) == ESP_OK && status.md) {
             if (as5600_get_angle((as5600_handle_t)as5600_handle, &angle) == ESP_OK) {
-                degrees = as5600_angle_to_degrees(angle);
+                degrees = as5600_angle_to_degrees(angle) + 22;
+                if(degrees > 360) degrees -= 360;
             } else {
-                ESP_LOGE(TAG, "Failed to read angle");
+                //ESP_LOGE(TAG, "Failed to read angle");
             }
         } else {
-            ESP_LOGE(TAG, "Invalid status");
+            //ESP_LOGE(TAG, "Invalid status");
         }
+        ESP_LOGI(TAG, "angulo: %f", degrees);
         xQueueOverwrite(q_angle, &degrees);
         vTaskDelayUntil(&ticks, pdMS_TO_TICKS(PID_TS));
     }
@@ -107,7 +110,7 @@ void task_pid(void *params) {
         .kp = 0,
         .ki = 0,
         .kd = 0,
-        .kick = NO_KICK,
+        .kick = WITH_KICK,
         .windup = WITH_WINDUP,
     };
 
@@ -142,44 +145,45 @@ void task_pid(void *params) {
         .in2 = IN2_GPIO,
     };
     ESP_ERROR_CHECK(l298n_init(pwm_config, &pwm_handle, direction_gpio));
+    ESP_ERROR_CHECK(ledc_fade_func_install(0));
 
     float angle, ref = 0;
 
     bool start = false;
 
     uart_rx_event_t uart_event;
-    uart_trasnmit_t uart_tx_data;
+    uart_transmit_t uart_tx_data;
     
     while(1) {
         if (xQueueReceive(q_rx_event, &uart_event, 0) == pdTRUE) {
             switch (uart_event.event) {
                 case EVENT_START:
-                    start = true;
-                    break;
+                start = true;
+                break;
                 case EVENT_STOP:
-                    start = false;
-                    break;
+                start = false;
+                break;
                 case EVENT_KP:
-                    pid_params.kp = uart_event.value;
-                    break;
+                pid_params.kp = uart_event.value;
+                break;
                 case EVENT_KI:
-                    pid_params.ki = uart_event.value;
-                    break;
+                pid_params.ki = uart_event.value;
+                break;
                 case EVENT_KD:
-                    pid_params.kd = uart_event.value;
-                    break;
+                pid_params.kd = uart_event.value;
+                break;
                 case EVENT_WINDUP:
-                    pid_params.windup = (uart_event.value != 0) ? WITH_WINDUP : NO_WINDUP;
-                    break;
+                pid_params.windup = (uart_event.value != 0) ? WITH_WINDUP : NO_WINDUP;
+                break;
                 case EVENT_KICK:
-                    pid_params.kick = (uart_event.value != 0) ? WITH_KICK : NO_KICK;
-                    break;
+                pid_params.kick = (uart_event.value != 0) ? WITH_KICK : NO_KICK;
+                break;
                 case EVENT_REF:
-                    ref = uart_event.value;
-                    break;
+                ref = uart_event.value;
+                break;
                 default:
-                    ESP_LOGW(TAG, "Unknown event received");
-                    break;
+                //ESP_LOGW(TAG, "Unknown event received");
+                break;
             }
         }
          
@@ -208,11 +212,12 @@ void task_pid(void *params) {
             }
             
             l298n_set_dc(pwm_handle, abs((int32_t)pid_variables.u));
+            
             uart_tx_data.ref = ref;
             uart_tx_data.angle = angle;
             uart_tx_data.u_control = pid_variables.u;
-            uart_tx_data.u_name = NULL;
-            xQueueSendToBack(q_tx_data, &uart_tx_data, portMAX_DELAY);
+            uart_tx_data.is_param = false;
+            xQueueSendToBack(q_tx_data, &uart_tx_data, 0);
         }
         else {
             l298n_set_dc(pwm_handle, 0);
@@ -224,13 +229,13 @@ void task_pid(void *params) {
 }
 
 void task_uart_tx(void *params) {
-    uart_trasnmit_t final_buffer;
+    uart_transmit_t final_buffer;
     char buffer[UART_BUFF];
 
     while(1) {
         xQueueReceive(q_tx_data, &final_buffer, portMAX_DELAY);
 
-        if(final_buffer.u_name != NULL) {
+        if(final_buffer.is_param) {
             strcpy(buffer, final_buffer.u_name);
         }
         else {
@@ -242,11 +247,11 @@ void task_uart_tx(void *params) {
 
 void task_uart_rx(void *params) {
     char var_name[32];
-    uart_trasnmit_t uart_transmit = {
+    uart_transmit_t uart_transmit = {
         .angle = 0,
         .ref = 0,
         .u_control = 0,
-        .u_name = var_name
+        .is_param = true,
     };
     
     uart_rx_event_t uart_event;
@@ -265,40 +270,42 @@ void task_uart_rx(void *params) {
 
                 if(strncmp((char *)dtmp, "start", 5) == 0) {
                     uart_event.event = EVENT_START;
+                    sprintf(var_name, "ok start\n");
                 }
                 else if(strncmp((char *)dtmp, "stop", 4) == 0) {
                     uart_event.event = EVENT_STOP;
+                    sprintf(var_name, "ok stop\n");
                 }
                 else if (sscanf((char *)dtmp, "set kp %f", &uart_event.value) == 1) {
                     uart_event.event = EVENT_KP;
-                    sprintf(var_name, "Kp:%f", uart_event.value);
+                    sprintf(var_name, "ok kp:%f\n", uart_event.value);
                 }
                 else if (sscanf((char *)dtmp, "set kd %f", &uart_event.value) == 1) {
                     uart_event.event = EVENT_KD;
-                    sprintf(var_name, "Kd:%f", uart_event.value);
+                    sprintf(var_name, "ok kd:%f\n", uart_event.value);
                 }
                 else if (sscanf((char *)dtmp, "set ki %f", &uart_event.value) == 1) {
                     uart_event.event = EVENT_KI;
-                    sprintf(var_name, "Ki:%f", uart_event.value);
+                    sprintf(var_name, "ok ki:%f\n", uart_event.value);
                 }
                 else if (sscanf((char *)dtmp, "set windup %f", &uart_event.value) == 1) {
                     uart_event.event = EVENT_WINDUP;
-                    sprintf(var_name, "Windup:%f", uart_event.value);
+                    sprintf(var_name, "ok windup:%f\n", uart_event.value);
                 }
                 else if (sscanf((char *)dtmp, "set kick %f", &uart_event.value) == 1) {
                     uart_event.event = EVENT_KICK;
-                    sprintf(var_name, "Kick:%f", uart_event.value);
+                    sprintf(var_name, "ok kick:%f\n", uart_event.value);
                 }
                 else if (sscanf((char *)dtmp, "set ref %f", &uart_event.value) == 1) {
                     uart_event.event = EVENT_REF;
-                    sprintf(var_name, "Ref:%f", uart_event.value);
+                    sprintf(var_name, "ok ref:%f\n", uart_event.value);
                 } else {
-                    ESP_LOGW(TAG, "Unknown command received: %s", dtmp);
+                    //ESP_LOGW(TAG, "Unknown command received: %s", dtmp);
                     continue;
                 }
-
+                strcpy(uart_transmit.u_name, var_name);    
                 xQueueSendToBack(q_tx_data, &uart_transmit, portMAX_DELAY);
-                xQueueSendToBack(q_rx_event, &event, portMAX_DELAY);
+                xQueueSendToBack(q_rx_event, &uart_event, portMAX_DELAY);
             }
             else {
                 uart_flush_input(UART_NUM_0);
@@ -308,49 +315,48 @@ void task_uart_rx(void *params) {
 }
 
 void app_main(void) {
-    ESP_ERROR_CHECK(ledc_fade_func_install(0));
     q_angle = xQueueCreate(1, sizeof(float));
-    q_rx_event = xQueueCreate(5, sizeof(uart_rx_event_t));
-    q_tx_data = xQueueCreate(5, sizeof(uart_trasnmit_t));
-    ESP_LOGI(TAG, "Queue created");
+    q_rx_event = xQueueCreate(10, sizeof(uart_rx_event_t));
+    q_tx_data = xQueueCreate(10, sizeof(uart_transmit_t));
+    //ESP_LOGI(TAG, "Queue created");
     uart_init();
 
     xTaskCreate(
         task_read_angle,
         "task_read_angle",
-        1024,
+        1024 * 4,
         NULL,
         tskIDLE_PRIORITY + 1,
         NULL
     );
-    ESP_LOGI(TAG, "Task created: task_read_angle");
+    //ESP_LOGI(TAG, "Task created: task_read_angle");
     xTaskCreate(
         task_pid,
         "task_pid",
-        1024,
+        1024 * 4,
         NULL,
         tskIDLE_PRIORITY + 1,
         NULL
     );
-    ESP_LOGI(TAG, "Task created: task_pid");
+    //ESP_LOGI(TAG, "Task created: task_pid");
     xTaskCreate(
         task_uart_tx,
         "task_uart_tx",
-        1024,
+        1024 * 4,
         NULL,
         tskIDLE_PRIORITY + 1,
         NULL
     );
-    ESP_LOGI(TAG, "Task created: task_uart_tx");
+    //ESP_LOGI(TAG, "Task created: task_uart_tx");
     xTaskCreate(
         task_uart_rx,
         "task_uart_rx",
-        1024,
+        1024 * 4,
         NULL,
         tskIDLE_PRIORITY + 1,
         NULL
     );
-    ESP_LOGI(TAG, "Task created: task_uart_rx");
+    //ESP_LOGI(TAG, "Task created: task_uart_rx");
 }
 
 void uart_init(void) {
