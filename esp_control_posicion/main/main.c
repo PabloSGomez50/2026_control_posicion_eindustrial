@@ -1,10 +1,11 @@
 #include <stdio.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "esp_system.h"
 #include "esp_log.h"
-#include "driver/uart.h"
+#include "driver/usb_serial_jtag.h"
 #include "as5600.h"
 #include "l298n.h"
 #include "pid.h"
@@ -23,9 +24,7 @@
 #define IN2_GPIO                GPIO_NUM_3
 #define PID_TS                  20 // En ms
 
-#define UART_BAUDRATE       115200
-#define UART_BUFF           256
-#define UART_PATTERN_CHR    '\n'
+#define USB_BUFF           256
 
 typedef enum {
     EVENT_START,
@@ -52,11 +51,10 @@ typedef struct {
 } uart_transmit_t;
 
 QueueHandle_t q_angle;
-QueueHandle_t q_uart;
 QueueHandle_t q_rx_event;
 QueueHandle_t q_tx_data;
 
-void uart_init(void);
+void usb_init(void);
 
 void task_read_angle(void *params) {
     as5600_init_dir(DIR_GPIO_NUM);
@@ -93,10 +91,10 @@ void task_read_angle(void *params) {
                 degrees = as5600_angle_to_degrees(angle) + 22;
                 if(degrees > 360) degrees -= 360;
             } else {
-                //ESP_LOGE(TAG, "Failed to read angle");
+                ESP_LOGE(TAG, "Failed to read angle");
             }
         } else {
-            //ESP_LOGE(TAG, "Invalid status");
+            ESP_LOGE(TAG, "Invalid status");
         }
         ESP_LOGI(TAG, "angulo: %f", degrees);
         xQueueOverwrite(q_angle, &degrees);
@@ -182,7 +180,7 @@ void task_pid(void *params) {
                 ref = uart_event.value;
                 break;
                 default:
-                //ESP_LOGW(TAG, "Unknown event received");
+                ESP_LOGW(TAG, "Unknown event received");
                 break;
             }
         }
@@ -230,7 +228,7 @@ void task_pid(void *params) {
 
 void task_uart_tx(void *params) {
     uart_transmit_t final_buffer;
-    char buffer[UART_BUFF];
+    char buffer[USB_BUFF];
 
     while(1) {
         xQueueReceive(q_tx_data, &final_buffer, portMAX_DELAY);
@@ -241,7 +239,7 @@ void task_uart_tx(void *params) {
         else {
             sprintf(buffer, "R%.2fA%.2fU%.2f\n", final_buffer.ref, final_buffer.angle, final_buffer.u_control);
         }
-        uart_write_bytes(UART_NUM_0, buffer, strlen(buffer));
+        usb_serial_jtag_write_bytes(buffer, strlen(buffer), portMAX_DELAY);
     }
 }
 
@@ -255,60 +253,67 @@ void task_uart_rx(void *params) {
     };
     
     uart_rx_event_t uart_event;
-    uart_event_t event;
-    uint8_t* dtmp = (uint8_t*) malloc(UART_BUFF + 1);
+    
+    char rx_buff[USB_BUFF];
+    int rx_idx = 0;
 
     while(1) {
-        xQueueReceive(q_uart, (void *)&event, portMAX_DELAY);
-        if(event.type == UART_PATTERN_DET) {
-            size_t buffered_size;
-            uart_get_buffered_data_len(UART_NUM_0, &buffered_size);
-            int pos = uart_pattern_pop_pos(UART_NUM_0);
-            if(pos != -1) {
-                int read_len = uart_read_bytes(UART_NUM_0, dtmp, pos + 1, portMAX_DELAY);
-                dtmp[read_len] = '\0';
+        uint8_t ch;
+        int read_len = usb_serial_jtag_read_bytes(&ch, 1, portMAX_DELAY);
 
-                if(strncmp((char *)dtmp, "start", 5) == 0) {
-                    uart_event.event = EVENT_START;
-                    sprintf(var_name, "ok start\n");
+        if(read_len > 0) {
+            if(ch == '\n' || ch == '\r') {
+                if(rx_idx > 0) {
+                    rx_buff[rx_idx] = '\0';
+
+                    if(strncmp(rx_buff, "start", 5) == 0) {
+                        uart_event.event = EVENT_START;
+                        sprintf(var_name, "ok start\n");
+                    }
+                    else if(strncmp(rx_buff, "stop", 4) == 0) {
+                        uart_event.event = EVENT_STOP;
+                        sprintf(var_name, "ok stop\n");
+                    }
+                    else if (sscanf(rx_buff, "set kp %f", &uart_event.value) == 1) {
+                        uart_event.event = EVENT_KP;
+                        sprintf(var_name, "ok kp:%f\n", uart_event.value);
+                    }
+                    else if (sscanf(rx_buff, "set kd %f", &uart_event.value) == 1) {
+                        uart_event.event = EVENT_KD;
+                        sprintf(var_name, "ok kd:%f\n", uart_event.value);
+                    }
+                    else if (sscanf(rx_buff, "set ki %f", &uart_event.value) == 1) {
+                        uart_event.event = EVENT_KI;
+                        sprintf(var_name, "ok ki:%f\n", uart_event.value);
+                    }
+                    else if (sscanf(rx_buff, "set windup %f", &uart_event.value) == 1) {
+                        uart_event.event = EVENT_WINDUP;
+                        sprintf(var_name, "ok windup:%f\n", uart_event.value);
+                    }
+                    else if (sscanf(rx_buff, "set kick %f", &uart_event.value) == 1) {
+                        uart_event.event = EVENT_KICK;
+                        sprintf(var_name, "ok kick:%f\n", uart_event.value);
+                    }
+                    else if (sscanf(rx_buff, "set ref %f", &uart_event.value) == 1) {
+                        uart_event.event = EVENT_REF;
+                        sprintf(var_name, "ok ref:%f\n", uart_event.value);
+                    } else {
+                        ESP_LOGW(TAG, "Unknown command received: %s", rx_buff);
+                        rx_idx = 0;
+                        continue;
+                    }
+
+                    strcpy(uart_transmit.u_name, var_name);    
+                    xQueueSendToBack(q_tx_data, &uart_transmit, portMAX_DELAY);
+                    xQueueSendToBack(q_rx_event, &uart_event, portMAX_DELAY);
+
+                    rx_idx = 0;
                 }
-                else if(strncmp((char *)dtmp, "stop", 4) == 0) {
-                    uart_event.event = EVENT_STOP;
-                    sprintf(var_name, "ok stop\n");
-                }
-                else if (sscanf((char *)dtmp, "set kp %f", &uart_event.value) == 1) {
-                    uart_event.event = EVENT_KP;
-                    sprintf(var_name, "ok kp:%f\n", uart_event.value);
-                }
-                else if (sscanf((char *)dtmp, "set kd %f", &uart_event.value) == 1) {
-                    uart_event.event = EVENT_KD;
-                    sprintf(var_name, "ok kd:%f\n", uart_event.value);
-                }
-                else if (sscanf((char *)dtmp, "set ki %f", &uart_event.value) == 1) {
-                    uart_event.event = EVENT_KI;
-                    sprintf(var_name, "ok ki:%f\n", uart_event.value);
-                }
-                else if (sscanf((char *)dtmp, "set windup %f", &uart_event.value) == 1) {
-                    uart_event.event = EVENT_WINDUP;
-                    sprintf(var_name, "ok windup:%f\n", uart_event.value);
-                }
-                else if (sscanf((char *)dtmp, "set kick %f", &uart_event.value) == 1) {
-                    uart_event.event = EVENT_KICK;
-                    sprintf(var_name, "ok kick:%f\n", uart_event.value);
-                }
-                else if (sscanf((char *)dtmp, "set ref %f", &uart_event.value) == 1) {
-                    uart_event.event = EVENT_REF;
-                    sprintf(var_name, "ok ref:%f\n", uart_event.value);
-                } else {
-                    //ESP_LOGW(TAG, "Unknown command received: %s", dtmp);
-                    continue;
-                }
-                strcpy(uart_transmit.u_name, var_name);    
-                xQueueSendToBack(q_tx_data, &uart_transmit, portMAX_DELAY);
-                xQueueSendToBack(q_rx_event, &uart_event, portMAX_DELAY);
             }
             else {
-                uart_flush_input(UART_NUM_0);
+                if(rx_idx < USB_BUFF - 1) {
+                    rx_buff[rx_idx++] = ch;
+                }
             }
         }
     }
@@ -318,8 +323,8 @@ void app_main(void) {
     q_angle = xQueueCreate(1, sizeof(float));
     q_rx_event = xQueueCreate(10, sizeof(uart_rx_event_t));
     q_tx_data = xQueueCreate(10, sizeof(uart_transmit_t));
-    //ESP_LOGI(TAG, "Queue created");
-    uart_init();
+    ESP_LOGI(TAG, "Queue created");
+    usb_init();
 
     xTaskCreate(
         task_read_angle,
@@ -329,7 +334,7 @@ void app_main(void) {
         tskIDLE_PRIORITY + 1,
         NULL
     );
-    //ESP_LOGI(TAG, "Task created: task_read_angle");
+    ESP_LOGI(TAG, "Task created: task_read_angle");
     xTaskCreate(
         task_pid,
         "task_pid",
@@ -338,7 +343,7 @@ void app_main(void) {
         tskIDLE_PRIORITY + 1,
         NULL
     );
-    //ESP_LOGI(TAG, "Task created: task_pid");
+    ESP_LOGI(TAG, "Task created: task_pid");
     xTaskCreate(
         task_uart_tx,
         "task_uart_tx",
@@ -347,7 +352,7 @@ void app_main(void) {
         tskIDLE_PRIORITY + 1,
         NULL
     );
-    //ESP_LOGI(TAG, "Task created: task_uart_tx");
+    ESP_LOGI(TAG, "Task created: task_uart_tx");
     xTaskCreate(
         task_uart_rx,
         "task_uart_rx",
@@ -356,22 +361,11 @@ void app_main(void) {
         tskIDLE_PRIORITY + 1,
         NULL
     );
-    //ESP_LOGI(TAG, "Task created: task_uart_rx");
+    ESP_LOGI(TAG, "Task created: task_uart_rx");
 }
 
-void uart_init(void) {
-    uart_config_t uart_config = {
-        .baud_rate = UART_BAUDRATE,
-        .data_bits = UART_DATA_8_BITS,
-        .parity = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-        .source_clk = UART_SCLK_DEFAULT,
-    };
-
-    // 1. Instalamos el driver con una cola de eventos (uart0_queue)
-    uart_driver_install(UART_NUM_0, UART_BUFF * 2, UART_BUFF * 2, 20, &q_uart, 0);
-    uart_param_config(UART_NUM_0, &uart_config);
-    uart_enable_pattern_det_baud_intr(UART_NUM_0, UART_PATTERN_CHR, 1, 9, 0, 0);
-    uart_pattern_queue_reset(UART_NUM_0, 20);
+void usb_init(void) {
+    usb_serial_jtag_driver_config_t usb_config = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+    // Instalar driver de USB Serial JTAG
+    usb_serial_jtag_driver_install(&usb_config);
 }
